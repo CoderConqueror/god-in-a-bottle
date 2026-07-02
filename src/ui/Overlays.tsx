@@ -1,26 +1,26 @@
 import { useRef, useState } from 'react';
 import { game, useGame } from '../state/store';
 import { finalSummary } from '../sim/chronicle';
-import { yearOf } from '../sim/types';
+import { yearOf, END_YEAR } from '../sim/types';
 
 // ------------------------------------------------------------- Onboarding
 
 const SLIDES = [
   {
-    title: 'There is an island in this bottle.',
-    body: 'Twenty settlers have just come ashore. Over two hundred years they will farm, build, invent, believe, quarrel, and die — entirely on their own. You cannot move them. You cannot command them. You were never asked for.',
+    title: 'There is a world in this bottle.',
+    body: 'Twenty settlers have just come ashore on one island of a small sealed planet. Over more than a thousand years their descendants will farm, build, sail, invent, believe, quarrel, and die — entirely on their own. You cannot move them. You cannot command them. You were never asked for.',
   },
   {
     title: 'You are not their ruler. You are their weather.',
-    body: 'You hold a slow-refilling pool of Influence. Spend it on interventions — a blessed harvest, a drought, an eclipse, a plague, a dream slipped into a sleeping mind. Every act has a cost, a cooldown, and consequences that arrive decades late.',
+    body: 'You hold a slow-refilling pool of Influence. Spend it on interventions — a blessed harvest, a drought, an eclipse, a plague, a dream slipped into a sleeping mind. Every act has a cost, a cooldown, and consequences that arrive centuries late.',
   },
   {
     title: 'They will try to explain you.',
-    body: 'Act in patterns and the island will notice. Gods will be named for what you do. Rituals, taboos, prophecies, schisms — their theology is built from your fingerprints, and it will steer their history: who they marry, where they settle, whom they fight.',
+    body: 'Act in patterns and the world will notice. Gods will be named for what you do — and forgotten, if you fall silent. Rituals, taboos, prophecies, schisms: their theology is built from your fingerprints, and it steers who they marry, where they sail, whom they fight. The Ledger keeps both accounts: what you did, and what they believed.',
   },
   {
-    title: 'Observe. Interpret. Intervene. Wait.',
-    body: 'Click anything inside the bottle to study it. Read the Chronicle. Watch the Mythology panel — it is the story of how they slowly built an understanding of you. The same seed always makes the same world; a new seed makes a new one. Begin.',
+    title: 'Turn the world. Lean in. Wait.',
+    body: 'Drag the bottle to spin the planet; scroll to lean close enough to read the roads, ruins, and pilgrim paths that history leaves on its skin. Click anything to study it. The same seed always makes the same world; a new seed makes a new one. Begin.',
   },
 ];
 
@@ -57,7 +57,7 @@ export function Summary(): JSX.Element | null {
     <div className="overlay">
       <div className="card summary">
         <div className="card-kicker">The chronicle closes</div>
-        <h2>{game.st.worldName}, after {Math.min(200, yearOf(game.st.tick))} years</h2>
+        <h2>{game.st.worldName}, after {Math.min(END_YEAR, yearOf(game.st.tick))} years</h2>
         <div className="summary-body">
           {paras.map((p, i) => <p key={i}>{p}</p>)}
         </div>

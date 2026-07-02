@@ -75,7 +75,16 @@ export function Timeline(): JSX.Element {
   const st = game.st;
   const curYear = Math.floor(st.tick / 4) + 1;
   const span = END_YEAR;
-  const majors = st.events.filter(e => e.imp === 3);
+  // turning points, not marker soup: if history runs long, keep only the hinges
+  let majors = st.events.filter(e => e.imp === 3);
+  if (majors.length > 70) {
+    const hinge = new Set(['era', 'deity', 'wonder', 'schism', 'ruin', 'prophecy', 'arrival']);
+    const hinges = majors.filter(e => hinge.has(e.type));
+    const rest = majors.filter(e => !hinge.has(e.type));
+    const budget = Math.max(0, 70 - hinges.length);
+    const stride = Math.ceil(rest.length / Math.max(1, budget));
+    majors = [...hinges, ...rest.filter((_, i) => i % stride === 0)].sort((a, b) => a.tick - b.tick);
+  }
   return (
     <div className="timeline">
       <div className="timeline-track">
@@ -106,7 +115,11 @@ export function Timeline(): JSX.Element {
         <div className="timeline-now" style={{ left: `${Math.min(100, ((curYear - 1) / span) * 100)}%` }} />
       </div>
       <div className="timeline-scale">
-        <span>Year 1</span><span>50</span><span>100</span><span>150</span><span>200</span>
+        <span>Year 1</span>
+        <span>{Math.round(span / 4)}</span>
+        <span>{Math.round(span / 2)}</span>
+        <span>{Math.round((span * 3) / 4)}</span>
+        <span>{span}</span>
       </div>
     </div>
   );

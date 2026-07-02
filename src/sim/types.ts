@@ -71,6 +71,7 @@ export interface Settlement {
   graceSeen: number; // beneficial signs witnessed
   wrathSeen: number; // harmful signs witnessed
   leader: number | null;
+  wonderName?: string;
   warWith: number | null;
   warStart: number;
   lastSplit: number; // tick of last schism/expedition
@@ -93,9 +94,33 @@ export interface Deity {
   worship: number;
   year: number;      // year of emergence
   epithets: string[];
+  faded: boolean;    // forgotten gods leave the pantheon but not the record
+  fade: number;      // consecutive lean years
 }
 
 export type MythKind = 'myth' | 'legend' | 'ritual' | 'taboo' | 'prophecy' | 'festival' | 'schism' | 'cult';
+
+export interface Road { a: number; b: number }
+
+export interface Scar {
+  x: number;
+  y: number;
+  r: number;          // radius in tiles
+  kind: 'burn' | 'fade';
+  year: number;
+}
+
+export interface LedgerEntry {
+  id: number;
+  tick: number;
+  year: number;
+  action: string;      // intervention name
+  icon: string;
+  targetName: string;
+  domain: Domain;
+  interpretation: string | null; // how civilization explained it
+  echoes: string[];    // consequences that arrived later
+}
 
 export interface Myth {
   id: number;
@@ -147,6 +172,7 @@ export interface DelayedEffect {
   a?: number;
   b?: number;
   s?: string;
+  lid?: number; // originating ledger entry, for echo attribution
 }
 
 export interface WorldCulture {
@@ -167,6 +193,10 @@ export interface SimState {
   H: number;
   tiles: Tile[];
   terrainV: number; // bumped when terrain changes (ruins, sacred sites)
+  devV: number;     // bumped when development changes (roads, farms, buildings, forests)
+  roads: Road[];
+  scars: Scar[];
+  ledger: LedgerEntry[];
   sacred: SacredSite[];
   people: Person[];
   settlements: Settlement[];
@@ -199,7 +229,9 @@ export interface SimState {
 
 export const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'] as const;
 export const TICKS_PER_YEAR = 4;
-export const END_YEAR = 200;
+export const END_YEAR = 1200;
+export const GRID_W = 128; // world wraps east-west: it is a planet now
+export const GRID_H = 64;
 
 export function yearOf(tick: number): number {
   return Math.floor(tick / TICKS_PER_YEAR) + 1;
@@ -208,11 +240,13 @@ export function seasonOf(tick: number): number {
   return tick % TICKS_PER_YEAR;
 }
 export function idx(st: SimState, x: number, y: number): number {
-  return y * st.W + x;
+  return y * st.W + ((x % st.W) + st.W) % st.W;
 }
 export function inBounds(st: SimState, x: number, y: number): boolean {
-  return x >= 0 && y >= 0 && x < st.W && y < st.H;
+  return y >= 0 && y < st.H; // x wraps around the globe
 }
 export function dist(ax: number, ay: number, bx: number, by: number): number {
-  return Math.hypot(ax - bx, ay - by);
+  let dx = Math.abs(ax - bx);
+  if (dx > GRID_W / 2) dx = GRID_W - dx;
+  return Math.hypot(dx, ay - by);
 }

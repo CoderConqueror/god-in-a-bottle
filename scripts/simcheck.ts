@@ -4,18 +4,15 @@ import { applyIntervention } from '../src/sim/interventions';
 
 function run(seed: string, intervene: boolean) {
   const st = newSim(seed);
-  for (let t = 0; t < 800 && !st.ended; t++) {
+  for (let t = 0; t < 4800 && !st.ended; t++) {
     simTick(st);
-    if (intervene) {
+    if (intervene && t % 600 === 240) {
       const liv = st.settlements.filter(s => !s.razed);
-      if (t === 40) applyIntervention(st, 'bless', { sid: liv[0]?.id });
-      if (t === 100) applyIntervention(st, 'rain');
-      if (t === 200) applyIntervention(st, 'eclipse');
-      if (t === 260 && liv[0]) applyIntervention(st, 'inspire', { sid: liv[0].id });
-      if (t === 340) applyIntervention(st, 'comet');
-      if (t === 420 && liv[0]) applyIntervention(st, 'plague', { sid: liv[0].id });
-      if (t === 500 && liv[0]) applyIntervention(st, 'miracle', { sid: liv[0].id });
-      if (t === 560) applyIntervention(st, 'consecrate', { x: liv[0] ? liv[0].x + 4 : 30, y: liv[0] ? liv[0].y : 30 });
+      const order = ['bless', 'rain', 'eclipse', 'inspire', 'comet', 'plague', 'miracle', 'consecrate'];
+      const id = order[Math.floor(t / 600) % order.length];
+      if (id === 'consecrate') applyIntervention(st, id, { x: liv[0] ? liv[0].x + 4 : 30, y: liv[0] ? liv[0].y : 30 });
+      else if (['rain', 'eclipse', 'comet'].includes(id)) applyIntervention(st, id);
+      else if (liv[0]) applyIntervention(st, id, { sid: liv[0].id });
     }
   }
   return st;
@@ -36,6 +33,10 @@ for (const seed of seeds) {
       `events=${st.events.length}`.padEnd(11),
       `eras=${st.eras.length}`,
       `peak=${st.stats.peakPop}`,
+      `roads=${st.roads.length}`,
+      `scars=${st.scars.length}`,
+      `faded=${st.deities.filter(d => d.faded).length}`,
+      `ledger=${st.ledger.length}`,
       st.endText ?? '',
     );
   }

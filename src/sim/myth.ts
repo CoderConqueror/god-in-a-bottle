@@ -29,10 +29,10 @@ export function recordSignal(st: SimState, domain: Domain, grace: number, wrath:
 }
 
 function maybeEmergeDeity(st: SimState, domain: Domain, sid: number | null): void {
-  if (st.deities.some(d => d.domain === domain)) return;
+  if (st.deities.some(d => d.domain === domain && !d.faded)) return;
   const sig = st.signals[domain];
   const weight = sig.grace + sig.wrath;
-  if (sig.count < 2 || weight < 4) return;
+  if (sig.count < 3 || weight < 5) return;
   const anyFaith = st.settlements.some(s => !s.razed && s.faith > 12);
   if (!anyFaith) return;
 
@@ -46,8 +46,17 @@ function maybeEmergeDeity(st: SimState, domain: Domain, sid: number | null): voi
     worship: 0,
     year: yearOf(st.tick),
     epithets: [title],
+    faded: false,
+    fade: 0,
   };
   st.deities.push(deity);
+
+  // the ledger closes its open questions: this is what they decided you were
+  for (const led of st.ledger) {
+    if (led.domain === domain && led.interpretation === null) {
+      led.interpretation = `Folded into the naming of ${name}, ${title}.`;
+    }
+  }
 
   // The settlement that witnessed the most adopts the god first.
   const witnesses = st.settlements.filter(s => !s.razed);
@@ -80,6 +89,19 @@ function describeSignals(st: SimState, domain: Domain): string {
 export function addMyth(st: SimState, kind: MythKind, title: string, text: string, deityId: number | null, data?: Myth['data']): Myth {
   const m: Myth = { id: st.nextId++, year: yearOf(st.tick), kind, title, text, deityId, active: true, data };
   st.myths.push(m);
+  // retellings reach back into the divine ledger
+  if ((kind === 'myth' || kind === 'legend' || kind === 'taboo' || kind === 'cult') && st.ledger.length) {
+    const deity = st.deities.find(d => d.id === deityId);
+    for (let i = st.ledger.length - 1; i >= 0 && i >= st.ledger.length - 6; i--) {
+      const led = st.ledger[i];
+      if (led.interpretation !== null) continue;
+      if (st.tick - led.tick > 240) break;
+      if (deity ? deity.domain === led.domain : true) {
+        led.interpretation = `Retold as “${title}.”`;
+        break;
+      }
+    }
+  }
   return m;
 }
 
@@ -181,9 +203,10 @@ const PROPHECY_DEFS: { cond: string; text: (deity: string, w: string) => string 
 ];
 
 export function maybeProphecy(st: SimState, s: Settlement): void {
-  if (st.deities.length === 0) return;
+  const alive = st.deities.filter(d => !d.faded);
+  if (alive.length === 0) return;
   if (st.myths.filter(m => m.kind === 'prophecy' && m.data?.fulfilled === null).length >= 2) return;
-  const deity = st.deities.find(d => d.id === s.patron) ?? pick(st.rng, st.deities);
+  const deity = alive.find(d => d.id === s.patron) ?? pick(st.rng, alive);
   const def = pick(st.rng, PROPHECY_DEFS);
   const prophets = st.people.filter(p => p.home === s.id && p.faith > 60 && p.age > 25);
   const prophet = prophets.length ? pick(st.rng, prophets) : null;
@@ -203,6 +226,10 @@ export function notifyCondition(st: SimState, cond: string): void {
     m.data.fulfilled = true;
     const deity = st.deities.find(d => d.id === m.deityId);
     addEvent(st, 'prophecy', 3, `${m.title} has come to pass. ${deity ? deity.name + ' is exalted; doubters fall silent.' : 'The faithful are vindicated.'}`);
+    const recent = st.ledger[st.ledger.length - 1];
+    if (recent && st.tick - recent.tick < 6 && recent.echoes.length < 4) {
+      recent.echoes.push(`${m.title} was proclaimed fulfilled by this sign — belief hardened around your act like amber.`);
+    }
     for (const s of st.settlements) {
       if (s.razed) continue;
       s.faith = Math.min(100, s.faith + 14);
@@ -260,12 +287,13 @@ function maybeSchism(st: SimState): void {
 // ---------------------------------------------------------------------
 
 function maybeStoryMyth(st: SimState): void {
-  if (!chance(st.rng, 0.22)) return;
+  if (!chance(st.rng, 0.12)) return;
   const recent = st.events.filter(e => e.imp >= 2 && st.tick - e.tick < 60 && e.type !== 'era' && e.type !== 'myth');
   if (!recent.length) return;
   const ev = pick(st.rng, recent);
   if (st.myths.some(m => m.data?.sid === ev.id)) return;
-  const deity = st.deities.length ? pick(st.rng, st.deities) : null;
+  const aliveD = st.deities.filter(d => !d.faded);
+  const deity = aliveD.length ? pick(st.rng, aliveD) : null;
   const attribution = deity
     ? pick(st.rng, [
       `The tale-keepers say this was the work of ${deity.name}, ${deity.title}.`,
@@ -317,13 +345,15 @@ function pilgrimage(st: SimState): void {
 // ---------------------------------------------------------------------
 
 function conversions(st: SimState): void {
-  if (st.deities.length === 0) return;
+  const alive = st.deities.filter(d => !d.faded);
+  if (alive.length === 0) return;
   for (const s of st.settlements) {
     if (s.razed) continue;
     if (s.patron === null && s.faith > 30 && chance(st.rng, 0.15)) {
       // adopt the god its neighbors follow, or the strongest
       const near = st.settlements.filter(o => !o.razed && o.patron !== null && dist(o.x, o.y, s.x, s.y) < 16);
-      const deity = near.length ? st.deities.find(d => d.id === near[0].patron)! : st.deities.slice().sort((a, b) => b.worship - a.worship)[0];
+      const deity = (near.length ? alive.find(d => d.id === near[0].patron) : undefined)
+        ?? alive.slice().sort((a, b) => b.worship - a.worship)[0];
       s.patron = deity.id;
       addEvent(st, 'faith', 2, `${s.name} has raised its first altar to ${deity.name}.`, s.id);
     }
@@ -334,8 +364,24 @@ export function religionTick(st: SimState): void {
   applyRituals(st);
   if (seasonOf(st.tick) === 3) { // yearly bookkeeping in winter
     for (const d of st.deities) {
+      if (d.faded) continue;
       d.worship = st.settlements.reduce((acc, s) => acc + (!s.razed && s.patron === d.id ? s.faith * (1 + s.pop / 60) : 0), 0);
       maybeCreateRitual(st, d);
+      // gods live on attention; without it their names wear smooth
+      if (d.worship < 5 && yearOf(st.tick) - d.year > 50) d.fade++;
+      else d.fade = 0;
+      if (d.fade > 30) {
+        d.faded = true;
+        for (const s of st.settlements) if (s.patron === d.id) { s.patron = null; s.sect = null; }
+        for (const m of st.myths) if (m.deityId === d.id && (m.kind === 'ritual' || m.kind === 'festival')) m.active = false;
+        st.signals[d.domain].grace *= 0.4;
+        st.signals[d.domain].wrath *= 0.4;
+        st.signals[d.domain].count = 0;
+        addMyth(st, 'legend', `The Forgetting of ${d.name}`,
+          `There was a god once called ${d.name}, ${d.title}. The rites lapsed in a busy generation, then the reasons for the rites, then the name itself — it survives only in three place-names and one lullaby whose words no longer mean anything. This is how gods die: not killed, but unattended.`,
+          d.id);
+        addEvent(st, 'faith', 3, `No shrine has burned an offering to ${d.name} in thirty years. The old god's name is worn smooth, and the sky it governed stands unexplained again.`);
+      }
     }
     conversions(st);
     maybeSchism(st);

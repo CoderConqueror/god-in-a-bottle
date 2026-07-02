@@ -36,8 +36,15 @@ export function fmtWhen(e: { year: number; season: number }): string {
 export function pushEra(st: SimState, name: string, note: string): void {
   if (st.eras.length && st.eras[st.eras.length - 1].name === name) return;
   if (st.eras.some(e => e.name === name)) return;
-  st.eras.push({ name, startYear: yearOf(st.tick), note });
-  addEvent(st, 'era', 3, `A new age begins: ${name}. ${note}`);
+  const prev = st.eras[st.eras.length - 1];
+  const year = yearOf(st.tick);
+  let retro = '';
+  if (prev) {
+    const span = year - prev.startYear;
+    retro = ` ${prev.name} closes after ${span} ${span === 1 ? 'year' : 'years'}; the world it leaves holds ${st.people.length} souls in ${st.settlements.filter(s => !s.razed).length} settlements.`;
+  }
+  st.eras.push({ name, startYear: year, note });
+  addEvent(st, 'era', 3, `A new age begins: ${name}. ${note}${retro}`);
 }
 
 export function currentEra(st: SimState): string {
@@ -56,10 +63,11 @@ export function finalSummary(st: SimState): string[] {
   const living = st.settlements.filter(s => !s.razed);
   const extinct = alivePop === 0;
 
+  const years = Math.min(yearOf(st.tick), 100000);
   paras.push(
     extinct
-      ? `The island of ${st.worldName} is silent now. For ${yearOf(st.tick)} years a people lived, built, believed, and fought inside the glass — and then the last of them was gone. The bottle holds only wind, ruins, and the memory of names.`
-      : `Two hundred years have turned inside the glass. The island of ${st.worldName} began with twenty souls stepping from a single boat. It ends with ${alivePop} people in ${living.length} ${living.length === 1 ? 'settlement' : 'settlements'}, heirs to everything that happened between.`
+      ? `The world of ${st.worldName} is silent now. For ${years} years a people lived, built, believed, and fought inside the glass — and then the last of them was gone. The bottle holds only wind, ruins, and the memory of names.`
+      : `${years >= 1000 ? 'More than a thousand years have' : `${years} years have`} turned inside the glass. The world of ${st.worldName} began with twenty souls stepping from a single boat. It ends with ${alivePop} people in ${living.length} ${living.length === 1 ? 'settlement' : 'settlements'}, heirs to everything that happened between.`
   );
 
   const s = st.stats;
@@ -74,10 +82,13 @@ export function finalSummary(st: SimState): string[] {
   }
 
   if (st.deities.length > 0) {
-    const chief = st.deities.slice().sort((a, b) => b.worship - a.worship)[0];
-    const others = st.deities.filter(d => d.id !== chief.id);
+    const alive = st.deities.filter(d => !d.faded);
+    const forgotten = st.deities.filter(d => d.faded);
+    const chief = (alive.length ? alive : st.deities).slice().sort((a, b) => b.worship - a.worship)[0];
+    const others = alive.filter(d => d.id !== chief.id);
     let p = `Above all they came to believe in ${chief.name}, ${chief.title}, sovereign of ${DOMAIN_WORD[chief.domain]}`;
     if (others.length) p += `, alongside ${others.map(d => d.name).join(' and ')}`;
+    if (forgotten.length) p += `. ${forgotten.length === 1 ? `One god — ${forgotten[0].name} — was worshipped, and then forgotten entirely` : `${forgotten.length} gods were worshipped and then forgotten entirely`}`;
     p += `. ${st.myths.filter(m => m.kind === 'myth' || m.kind === 'legend').length} myths and legends were told, ${st.myths.filter(m => m.kind === 'ritual' || m.kind === 'festival').length} rites observed, ${st.myths.filter(m => m.kind === 'prophecy').length} prophecies spoken.`;
     paras.push(p);
   } else {

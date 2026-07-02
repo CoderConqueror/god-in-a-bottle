@@ -1,14 +1,14 @@
 import { RNG, seedRng, rnd, ri, pick, chance, shuffled } from './rng';
 import {
   SimState, Settlement, Person, Domain, SacredSite,
-  yearOf, seasonOf, idx, inBounds, dist, TICKS_PER_YEAR, END_YEAR,
+  yearOf, seasonOf, idx, inBounds, dist, TICKS_PER_YEAR, END_YEAR, GRID_W, GRID_H,
 } from './types';
 import { generateTerrain, findSettlementSite, scoreSite } from './worldgen';
 import { makeCulture, personName, placeName, worldNameGen, pickTraits } from './names';
 import { addEvent, pushEra } from './chronicle';
 import { recordSignal, religionTick, notifyCondition, maybeTaboo, makeLegend, addMemory } from './myth';
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 // ---------------------------------------------------------------------
 // Technologies
@@ -96,9 +96,13 @@ export function newSim(seed: string): SimState {
     tick: 0,
     ended: false,
     endText: null,
-    W: 64, H: 64,
+    W: GRID_W, H: GRID_H,
     tiles: [],
     terrainV: 1,
+    devV: 1,
+    roads: [],
+    scars: [],
+    ledger: [],
     sacred: [],
     people: [],
     settlements: [],
@@ -143,14 +147,15 @@ export function newSim(seed: string): SimState {
     }
   }
 
-  // landing site: best coastal ground
-  let best = { x: st.W / 2, y: st.H / 2, score: -1 };
-  for (let y = 4; y < st.H - 4; y++) for (let x = 4; x < st.W - 4; x++) {
+  // landing site: best coastal ground anywhere on the planet
+  let best = { x: Math.floor(st.W / 2), y: Math.floor(st.H / 2), score: -1 };
+  for (let y = 4; y < st.H - 4; y++) for (let x = 0; x < st.W; x++) {
     const sc = scoreSite(st, x, y);
     if (sc > best.score) best = { x, y, score: sc };
   }
   const first = blankSettlement(st, best.x, best.y, placeName(st.rng, st.culture) || 'First Landing', 'the Firstcomers');
   first.food = 110;
+  first.lastSplit = -40; // the urge to scatter comes early to a new world
 
   // twenty souls step ashore
   const settlers: Person[] = [];
@@ -284,7 +289,7 @@ function economy(st: SimState): void {
     const hilly = st.tiles[idx(st, s.x, s.y)].t === 'hills' || st.tiles[idx(st, s.x, s.y)].elev > 0.5;
     s.stone += nAdults * (hilly ? 0.22 : 0.08) * (hasTech(st, 'masonry') ? 1.5 : 1);
 
-    let know = nAdults * 0.028 * (hasTech(st, 'writing') ? 1.6 : 1);
+    let know = nAdults * 0.022 * (hasTech(st, 'writing') ? 1.6 : 1);
     if (s.inspired > 0) know *= 1.9;
     know *= 1 + (s.buildings.hall ?? 0) * 0.1;
     s.knowledge += know;
@@ -361,10 +366,11 @@ function plagues(st: SimState): void {
       for (const p of folk) {
         if (chance(st.rng, 0.022 * resist * (p.age > 55 || p.age < 8 ? 1.6 : 1))) killPerson(st, p, 'plague');
       }
-      // contagion travels the trade roads
+      // contagion travels the trade roads — and, with sails, the sea lanes
       for (const o of living(st)) {
         if (o.id === s.id || o.plague > 0) continue;
-        if ((s.relations[o.id] ?? 0) > 10 && dist(s.x, s.y, o.x, o.y) < 20 && chance(st.rng, 0.03)) {
+        const linked = dist(s.x, s.y, o.x, o.y) < 20 || st.roads.some(rd => (rd.a === s.id && rd.b === o.id) || (rd.a === o.id && rd.b === s.id));
+        if ((s.relations[o.id] ?? 0) > 10 && linked && chance(st.rng, 0.03)) {
           o.plague = ri(st.rng, 5, 9);
           addEvent(st, 'plague', 2, `The sickness has followed the traders to ${o.name}.`, o.id);
         }
@@ -377,7 +383,7 @@ function plagues(st: SimState): void {
     } else if (s.pop > 55 && s.health < 45 && chance(st.rng, 0.004)) {
       s.plague = ri(st.rng, 6, 11);
       addEvent(st, 'plague', 3, `A sickness rises in the crowded lanes of ${s.name}. First the old, then the young; the healers are helpless.`, s.id);
-      recordSignal(st, 'death', 0, 0.6, s.id); // even natural death asks for a theology
+      recordSignal(st, 'death', 0, 0.35, s.id); // even natural death asks for a theology
     }
   }
 }
@@ -478,7 +484,10 @@ const BUILDS: { id: string; wood: number; stone: number; req?: string; max: numb
   { id: 'walls', wood: 20, stone: 70, req: 'masonry', max: 2, want: (st, s) => st.stats.wars > 0 && s.pop > 25, text: 'rings itself in stone walls' },
   { id: 'temple', wood: 40, stone: 60, req: 'masonry', max: 2, want: (st, s) => s.faith > 55 && s.patron !== null, text: 'begins a temple, the largest thing ever built here' },
   { id: 'monument', wood: 10, stone: 90, req: 'masonry', max: 1, want: (st, s) => s.pop > 45 && s.morale > 60, text: 'carves a monument so the future will know their names' },
+  { id: 'wonder', wood: 90, stone: 240, req: 'masonry', max: 1, want: (st, s) => s.pop > 55 && s.morale > 62 && s.faith > 45, text: '' },
 ];
+
+const WONDER_NAMES = ['the Colossus of', 'the Great Temple of', 'the Sky-Spire of', 'the Thousand-Step Shrine of', 'the Sun Gate of'];
 
 function construction(st: SimState): void {
   if (seasonOf(st.tick) !== 0) return;
@@ -491,6 +500,16 @@ function construction(st: SimState): void {
       s.wood -= b.wood;
       s.stone -= b.stone;
       s.buildings[b.id] = (s.buildings[b.id] ?? 0) + 1;
+      st.devV++;
+      if (b.id === 'wonder') {
+        const wname = `${pick(st.rng, WONDER_NAMES)} ${s.name}`;
+        s.wonderName = wname;
+        s.morale = Math.min(100, s.morale + 12);
+        s.faith = Math.min(100, s.faith + 10);
+        addEvent(st, 'wonder', 3, `After a generation of labor, ${s.name} finishes ${wname} — visible, sailors swear, from half the sea away. Whatever else is forgotten, this will not be.`, s.id);
+        makeLegend(st, `The Raising of ${wname}`, `Three lifetimes of quarrymen gave their backs to it. The last stone was set by a child, so that the future would remember it was built for her.`);
+        break;
+      }
       const isTemple = b.id === 'temple';
       addEvent(st, 'building', isTemple ? 3 : 1, `${s.name} ${b.text}.`, s.id);
       if (isTemple) {
@@ -506,7 +525,7 @@ function construction(st: SimState): void {
 function invention(st: SimState): void {
   if (seasonOf(st.tick) !== 3) return;
   // each art is harder to reach than the last: the easy ideas get had first
-  const costMult = 1 + Object.keys(st.techs).length * 0.35;
+  const costMult = 1 + Object.keys(st.techs).length * 0.8;
   for (const s of living(st)) {
     for (const t of TECHS) {
       if (hasTech(st, t.id)) continue;
@@ -548,9 +567,11 @@ export function foundSettlement(st: SimState, x: number, y: number, migrants: Pe
     s.food = Math.min(60, origin.food * 0.25);
     origin.food *= 0.75;
   }
-  addEvent(st, 'founding', 3, `${why} They raise the first roofs of ${s.name}.`, s.id);
+  st.devV++;
+  const nearRuin = st.tiles[idx(st, s.x, s.y)] && st.scars.some(sc => dist(sc.x, sc.y, s.x, s.y) < 5 && yearOf(st.tick) - sc.year > 60);
+  addEvent(st, 'founding', 3, `${why} They raise the first roofs of ${s.name}${nearRuin ? ', on ground where older walls still show through the grass' : ''}.`, s.id);
   if (st.settlements.filter(z => !z.razed).length === 2) {
-    pushEra(st, 'The Age of Hearths', 'One settlement becomes two; the island begins to fill.');
+    pushEra(st, 'The Age of Hearths', 'One settlement becomes two; the world begins to fill.');
   }
   return s;
 }
@@ -558,17 +579,23 @@ export function foundSettlement(st: SimState, x: number, y: number, migrants: Pe
 function migrationAndSchism(st: SimState): void {
   if (seasonOf(st.tick) !== 1) return;
   for (const s of living(st)) {
-    if (st.tick - s.lastSplit < 56) continue;
+    if (st.tick - s.lastSplit < 48) continue;
     const cap = capacityOf(st, s);
-    const crowded = s.pop > cap * 1.05 && s.pop >= 34;
+    const crowded = s.pop > cap * 1.0 && s.pop >= 30;
     const fractious = s.cohesion < 26 && s.pop >= 26;
-    const droughtFlight = st.weather.drought > 1.2 && s.hunger >= 2 && s.pop >= 24;
+    const droughtFlight = st.weather.drought > 1.2 && s.hunger >= 2 && s.pop >= 22;
     if (!crowded && !fractious && !droughtFlight) continue;
-    if (!chance(st.rng, fractious ? 0.45 : 0.28)) continue;
+    if (!chance(st.rng, fractious ? 0.45 : 0.3)) continue;
 
-    // prefer land near sacred ground; avoid old ruins
-    const site = findSettlementSite(st, s.x, s.y, 6, 16) ?? findSettlementSite(st, s.x, s.y, 4, 24);
+    // prefer land near sacred ground; with sails, whole new shores open up
+    let site = findSettlementSite(st, s.x, s.y, 6, 16) ?? findSettlementSite(st, s.x, s.y, 4, 24);
+    const canSail = hasTech(st, 'sailing') && isCoastal(st, s);
+    if (canSail && (!site || (crowded && chance(st.rng, 0.45)))) {
+      const far = findSettlementSite(st, s.x, s.y, 18, 62);
+      if (far && (!site || far.score > site.score * 0.8)) site = far;
+    }
     if (!site) continue;
+    const overseas = dist(site.x, site.y, s.x, s.y) > 17;
     const folk = shuffled(st.rng, st.people.filter(p => p.home === s.id));
     const nLeave = Math.floor(s.pop * (fractious ? 0.45 : 0.34));
     const migrants = folk.slice(0, nLeave);
@@ -583,9 +610,11 @@ function migrationAndSchism(st: SimState): void {
       s.tension[ns.id] = 15;
     } else {
       foundSettlement(st, site.x, site.y, migrants, s.faction,
-        crowded
-          ? `${s.name} has grown past what its fields can feed, and the young families draw lots for who must go.`
-          : `Driven by the long drought, families from ${s.name} follow the birds toward greener ground.`,
+        overseas
+          ? `Boats leave ${s.name} heavy with seed-grain and grandmothers, sailing past the edge of every map they own.`
+          : crowded
+            ? `${s.name} has grown past what its fields can feed, and the young families draw lots for who must go.`
+            : `Driven by the long drought, families from ${s.name} follow the birds toward greener ground.`,
         s.name);
     }
     refreshPop(st);
@@ -613,12 +642,19 @@ function trade(st: SimState): void {
       const amount = Math.min(rich.food * 0.12, 25);
       rich.food -= amount;
       poor.food += amount;
-      poor.wood += 0; // gratitude is its own currency early on
       a.relations[b.id] = Math.min(100, (a.relations[b.id] ?? 0) + 4);
       b.relations[a.id] = Math.min(100, (b.relations[a.id] ?? 0) + 4);
       a.morale = Math.min(100, a.morale + 1.5);
       b.morale = Math.min(100, b.morale + 1.5);
       if (chance(st.rng, 0.12)) addEvent(st, 'trade', 1, `Caravans pass between ${a.name} and ${b.name}; grain one way, timber and stories the other.`, null);
+      // steady friendship wears a permanent road (or sea-lane) into the world
+      if ((a.relations[b.id] ?? 0) > 22 && !st.roads.some(rd => (rd.a === a.id && rd.b === b.id) || (rd.a === b.id && rd.b === a.id))) {
+        st.roads.push({ a: a.id, b: b.id });
+        st.devV++;
+        addEvent(st, 'trade', 1, seaRoute && d > 20
+          ? `A trade lane is now worn into the sea between ${a.name} and ${b.name}; their sailors know each other's harbors by smell.`
+          : `The path between ${a.name} and ${b.name} has been walked so often it is now a road, with waymarkers and a shrine at the halfway spring.`, null);
+      }
     } else if (chance(st.rng, 0.3)) {
       a.relations[b.id] = Math.min(100, (a.relations[b.id] ?? 0) + 2);
       b.relations[a.id] = Math.min(100, (b.relations[a.id] ?? 0) + 2);
@@ -716,32 +752,42 @@ function tensionsAndWar(st: SimState): void {
   }
 }
 
-export function razeSettlement(st: SimState, loser: Settlement, winner: Settlement | null): void {
+export function razeSettlement(st: SimState, loser: Settlement, winner: Settlement | null, mode: 'sack' | 'abandon' = 'sack'): void {
   loser.razed = true;
   loser.razedYear = yearOf(st.tick);
   const t = st.tiles[idx(st, loser.x, loser.y)];
   t.ruinName = loser.name;
   st.terrainV++;
+  st.devV++;
+  st.scars.push({
+    x: loser.x, y: loser.y,
+    r: Math.min(4, 1.5 + loser.pop / 25),
+    kind: mode === 'sack' ? 'burn' : 'fade',
+    year: yearOf(st.tick),
+  });
   const folk = st.people.filter(p => p.home === loser.id);
   let killed = 0;
   for (const p of folk) {
-    if (chance(st.rng, 0.4)) { killPerson(st, p, 'war'); killed++; }
+    if (mode === 'sack' && chance(st.rng, 0.4)) { killPerson(st, p, 'war'); killed++; }
     else {
-      const refuge = winner ?? living(st).filter(s2 => s2.id !== loser.id)[0];
+      const refuge = winner ?? living(st).filter(s2 => s2.id !== loser.id)
+        .sort((a2, b2) => dist(a2.x, a2.y, loser.x, loser.y) - dist(b2.x, b2.y, loser.x, loser.y))[0];
       if (refuge) {
         p.home = refuge.id;
-        addMemory(p, `Fled the burning of ${loser.name}`);
-        p.morale = Math.max(0, p.morale - 20);
+        addMemory(p, mode === 'sack' ? `Fled the burning of ${loser.name}` : `Walked out of ${loser.name} when the last hearth went cold`);
+        p.morale = Math.max(0, p.morale - (mode === 'sack' ? 20 : 10));
       } else {
-        killPerson(st, p, 'war');
-        killed++;
+        killPerson(st, p, mode === 'sack' ? 'war' : 'age');
+        if (mode === 'sack') killed++;
       }
     }
   }
   refreshPop(st);
-  addEvent(st, 'ruin', 3, winner
-    ? `${loser.name} burns. ${killed} die in the sack; the survivors are marched to ${winner.name} with what they can carry. Only fire-blackened stones remain.`
-    : `${loser.name} is abandoned to the wind. Its empty doorways watch the road.`,
+  addEvent(st, 'ruin', 3, mode === 'sack'
+    ? (winner
+      ? `${loser.name} burns. ${killed} die in the sack; the survivors are marched to ${winner.name} with what they can carry. Only fire-blackened stones remain.`
+      : `${loser.name} burns, and no one claims the ashes. Only fire-blackened stones remain.`)
+    : `${loser.name} is quietly abandoned. The last families bar their doors out of habit, and leave. Its empty doorways watch the road for travellers who still name it.`,
     winner ? winner.id : null);
 }
 
@@ -765,7 +811,7 @@ function naturalEvents(st: SimState): void {
         `Lightning walks the shore at ${s.name}. An old drying-shed burns; the rain, at least, is fresh water.`,
         `A gale drives the fishing fleet of ${s.name} home early, minus one hull. The widow watches the horizon all winter.`,
       ]), s.id);
-      recordSignal(st, 'storm', 0, 0.3, s.id);
+      recordSignal(st, 'storm', 0, 0.15, s.id);
     }
   }
   // wildfire in dry summers
@@ -782,8 +828,8 @@ function naturalEvents(st: SimState): void {
       if (chance(st.rng, 0.3)) s.buildings[b] = Math.max(0, s.buildings[b] - 1);
     }
     s.morale = Math.max(0, s.morale - 10);
-    addEvent(st, 'disaster', 2, `The earth shakes beneath ${s.name}. Walls crack; the old say the island turned in its sleep.`, s.id);
-    recordSignal(st, 'earth', 0, 0.8, s.id);
+    addEvent(st, 'disaster', 2, `The earth shakes beneath ${s.name}. Walls crack; the old say the world turned in its sleep.`, s.id);
+    recordSignal(st, 'earth', 0, 0.4, s.id);
   }
 }
 
@@ -797,6 +843,11 @@ function processDelayed(st: SimState): void {
   st.delayed = st.delayed.filter(d => d.tick > st.tick);
   for (const d of due) {
     const s = d.a !== undefined ? st.settlements.find(x => x.id === d.a && !x.razed) : undefined;
+    const echo = (text: string) => {
+      if (d.lid === undefined) return;
+      const led = st.ledger.find(l => l.id === d.lid);
+      if (led && led.echoes.length < 4) led.echoes.push(`Year ${yearOf(st.tick)} — ${text}`);
+    };
     switch (d.kind) {
       case 'flood': {
         const riverside = living(st).filter(x => nearRiver(st, x));
@@ -814,6 +865,7 @@ function processDelayed(st: SimState): void {
         if (riverside.length) {
           addEvent(st, 'disaster', 3, `Too much rain, too fast: the rivers leave their beds. Fields drown along every bank — though the elders note, grimly, that flooded ground grows back richer.`, null);
           recordSignal(st, 'storm', 0.3, 1.2, null);
+          echo(`the rivers rose and drowned the low fields. The silt they left grew back twice as green.`);
         }
         break;
       }
@@ -823,6 +875,7 @@ function processDelayed(st: SimState): void {
           s.knowledge += 30;
           addEvent(st, 'faith', 2, `In the quiet after the plague, ${s.name} rebuilds strangely: wider lanes, water carried from upstream, and a new solemnity at the shrines.`, s.id);
           maybeTaboo(st, s, 'death');
+          echo(`${s.name} rebuilt itself around the memory of the dying — wider lanes, cleaner water, sterner gods.`);
         }
         break;
       }
@@ -831,8 +884,10 @@ function processDelayed(st: SimState): void {
           if (chance(st.rng, 0.5)) {
             s.cohesion = Math.max(0, s.cohesion - 10);
             addEvent(st, 'strife', 2, `${s.name} turns on itself hunting the cause of its misfortunes. Accusations, a burned house, a family driven out.`, s.id);
+            echo(`${s.name} went hunting for someone to blame, and found a family to drive out.`);
           } else {
             maybeTaboo(st, s, 'earth');
+            echo(`${s.name} answered its misfortunes with a new law of life, observed to this day.`);
           }
         }
         break;
@@ -842,6 +897,7 @@ function processDelayed(st: SimState): void {
           const l = st.people.find(p => p.id === s.leader);
           if (l && l.renown > 18) {
             makeLegend(st, `The Dreams of ${l.name}`, `For years ${l.name} of ${s.name} woke before dawn with plans no one had taught them — canals, arguments, alphabets. Then the dreams stopped, as suddenly as they came, and ${l.name} wept at the door like someone widowed.`);
+            echo(`the dreams you kindled in ${l.name} went out, and their grief became a legend.`);
           }
         }
         break;
@@ -858,6 +914,7 @@ function processDelayed(st: SimState): void {
           }
         }
         addEvent(st, 'strife', 2, `The drought sorts the island into those who hold rivers and those who do not. Watchfires appear along the water.`, null);
+        echo(`your dry sky sorted the world into those who hold rivers and those who covet them.`);
         break;
       }
       case 'pilgrimSite': {
@@ -870,7 +927,8 @@ function processDelayed(st: SimState): void {
           st.sacred.push(site);
           st.tiles[idx(st, s.x, s.y)].sacredId = site.id;
           st.terrainV++;
-          addEvent(st, 'faith', 2, `Pilgrims now walk to ${s.name} from across the island, to touch the ground where the dying stood up.`, s.id);
+          addEvent(st, 'faith', 2, `Pilgrims now walk to ${s.name} from across the world, to touch the ground where the dying stood up.`, s.id);
+          echo(`the ground of ${s.name} became a pilgrim shrine — your mercy, mistaken for geography.`);
         }
         break;
       }
@@ -885,9 +943,27 @@ function processDelayed(st: SimState): void {
 function influenceRegen(st: SimState): void {
   const temples = living(st).reduce((n, s) => n + (s.buildings.temple ?? 0), 0);
   const shrines = living(st).reduce((n, s) => n + (s.buildings.shrine ?? 0), 0);
-  const worship = st.deities.reduce((n, d) => n + d.worship, 0);
-  const regen = Math.min(2.2, 0.45 + temples * 0.22 + shrines * 0.07 + worship / 4000);
+  const wonders = living(st).reduce((n, s) => n + (s.buildings.wonder ?? 0), 0);
+  const worship = st.deities.reduce((n, d) => n + (d.faded ? 0 : d.worship), 0);
+  const regen = Math.min(1.1, 0.12 + temples * 0.07 + shrines * 0.02 + wonders * 0.12 + worship / 9000);
   st.influence = Math.min(st.influenceMax, st.influence + regen);
+}
+
+// Forests fall back from the axes of growing towns, and creep back over ruins.
+function forestCycle(st: SimState): void {
+  if (seasonOf(st.tick) !== 3 || st.tick % 8 !== 3) return; // every other winter
+  for (const s of living(st)) {
+    const bite = s.pop * 0.0016;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (!inBounds(st, s.x, s.y + dy)) continue;
+      const t = st.tiles[idx(st, s.x + dx, s.y + dy)];
+      if (t.forest > 0) t.forest = Math.max(0, t.forest - bite);
+    }
+  }
+  for (const t of st.tiles) {
+    if (t.forest > 0.04 && t.forest < 0.9) t.forest = Math.min(0.9, t.forest + 0.004);
+  }
+  st.devV++;
 }
 
 function eraChecks(st: SimState): void {
@@ -902,7 +978,7 @@ function eraChecks(st: SimState): void {
     pushEra(st, 'The Rekindling', 'Against every expectation, the hearths fill again.');
   }
   const lastWar = st.events.filter(e => e.type === 'war').pop();
-  if (yearOf(st.tick) > 120 && pop > 110 && st.stats.wars > 0 && lastWar && st.tick - lastWar.tick > 100
+  if (yearOf(st.tick) > 350 && pop > 110 && st.stats.wars > 0 && lastWar && st.tick - lastWar.tick > 400
     && !st.eras.some(e => e.name === 'The Long Peace')) {
     pushEra(st, 'The Long Peace', 'A generation grows up unable to describe a war.');
   }
@@ -948,6 +1024,7 @@ export function simTick(st: SimState): void {
   naturalEvents(st);
   religionTick(st);
   processDelayed(st);
+  forestCycle(st);
   influenceRegen(st);
   eraChecks(st);
   sampleHistory(st);
@@ -955,7 +1032,9 @@ export function simTick(st: SimState): void {
   // settlements can die quietly, too
   for (const s of living(st)) {
     if (s.pop === 0) {
-      razeSettlement(st, s, null);
+      razeSettlement(st, s, null, 'abandon');
+    } else if (s.pop < 7 && st.tick - s.founded * 4 > 100 && living(st).length > 1 && chance(st.rng, 0.02)) {
+      razeSettlement(st, s, null, 'abandon');
     }
   }
 

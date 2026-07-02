@@ -1,8 +1,12 @@
 # God in a Bottle
 
-A luminous glass bottle contains an entire procedurally generated island. Twenty settlers
-arrive. Over two hundred simulated years they explore, settle, trade, invent, suffer,
-believe, fight, collapse, and recover — entirely on their own.
+A luminous glass vessel contains an entire procedurally generated planet — an archipelago
+world you can spin with a drag and lean into with a scroll. Twenty settlers come ashore on
+one island. Over twelve hundred simulated years their descendants explore, settle, sail to
+far shores, trade, invent, suffer, believe, fight, collapse, and recover — entirely on
+their own. History leaves marks you can see from orbit: roads wear in, farmland spreads,
+forests fall back from the axes, wonders rise, wars scar the ground, and ruins keep their
+names.
 
 You are not their ruler. You cannot move a single settler. You are an invisible
 supernatural influence with a slow-refilling pool of **Influence** and twelve
@@ -29,9 +33,13 @@ Everything is local: no APIs, no accounts, no telemetry, no remote assets.
 
 ## Playing
 
-- **Space** — play/pause · **1–4** — simulation speed · **Esc** — cancel targeting
-- Click anything inside the bottle (settlements, ground, ruins, sacred sites) to inspect it.
-- The **Chronicle** records history; **Mythology** records how they explain it; **Histories** charts the long arcs.
+- **Drag** the bottle to spin the planet; **scroll** to lean from full-world view down to
+  region inspection. The glass politely fades as you lean in.
+- **Space** — play/pause · **1–5** — simulation speed (Seasons → Æons) · **Esc** — cancel targeting
+- Click anything on the planet (settlements, ground, ruins, sacred sites) to inspect it.
+- The **Chronicle** records history; **Mythology** records how they explain it; the
+  **Ledger** pairs what you actually did with what they decided it meant — and what
+  echoed decades later; **Histories** charts the long arcs.
 - Saves: autosave + 3 manual slots (localStorage) + JSON export/import. Versioned; incompatible files are refused gracefully.
 - The same seed always creates the same world. Only your interventions make one telling differ from another.
 

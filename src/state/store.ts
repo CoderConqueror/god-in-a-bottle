@@ -15,10 +15,11 @@ export interface Selection {
 export interface SaveMeta { name: string; year: number; savedAt: number; seed: string }
 
 export const SPEEDS = [
-  { label: '1×', tps: 1 },
-  { label: '2×', tps: 3 },
-  { label: '4×', tps: 8 },
-  { label: '12×', tps: 24 },
+  { label: 'Seasons', tps: 2 },
+  { label: 'Years', tps: 8 },
+  { label: 'Decades', tps: 32 },
+  { label: 'Lifetimes', tps: 110 },
+  { label: 'Æons', tps: 240 },
 ];
 
 const SLOT_KEY = (n: number) => `giab:v${SAVE_VERSION}:slot:${n}`;
@@ -34,8 +35,10 @@ class Game {
   showSummary = false;
   modal: 'none' | 'saves' | 'seed' = 'none';
   muted = true;
-  leftTab: 'chronicle' | 'myths' | 'charts' = 'chronicle';
+  leftTab: 'chronicle' | 'myths' | 'ledger' | 'charts' = 'chronicle';
   focusEventId: number | null = null;
+  lastCast: { x: number | null; y: number | null; at: number } | null = null;
+  private lastAutosave = 0;
 
   private version = 0;
   private listeners = new Set<() => void>();
@@ -89,6 +92,8 @@ class Game {
     this.bump();
   }
 
+  private lastBump = 0;
+
   private pump(): void {
     if (!this.running || this.st.ended) return;
     const now = performance.now();
@@ -96,14 +101,19 @@ class Game {
     this.lastTime = now;
     this.acc += dt * SPEEDS[this.speedIdx].tps;
     let steps = 0;
-    while (this.acc >= 1 && steps < 30) {
+    while (this.acc >= 1 && steps < 45) {
       this.acc -= 1;
       steps++;
       simTick(this.st);
     }
+    if (this.acc > 45) this.acc = 0; // don't let a hitch snowball
     if (steps > 0) {
       this.afterTicks();
-      this.bump();
+      // at æon speeds, repaint the UI at a human cadence, not per tick-batch
+      if (this.speedIdx < 3 || now - this.lastBump > 150 || this.st.ended) {
+        this.lastBump = now;
+        this.bump();
+      }
     }
   }
 
@@ -121,8 +131,11 @@ class Game {
       if (evs[i].imp === 3) ambience.event(evs[i].type === 'era' ? 'era' : evs[i].type);
     }
     this.lastEventCount = evs.length;
-    // autosave every two in-game years
-    if (this.st.tick % 8 === 0) this.writeSlot(0, 'Autosave');
+    // autosave, throttled by wall-clock so Æon speed doesn't churn storage
+    if (Date.now() - this.lastAutosave > 8000) {
+      this.lastAutosave = Date.now();
+      this.writeSlot(0, 'Autosave');
+    }
     if (this.st.ended) {
       this.running = false;
       this.showSummary = true;
@@ -170,6 +183,15 @@ class Game {
     this.toast(res.msg);
     if (res.ok) {
       const def = interventionById(id)!;
+      // world-space feedback: a burst at the target, or a flash through the vessel
+      if (def.target === 'settlement' && target?.sid !== undefined) {
+        const s = this.st.settlements.find(x => x.id === target.sid);
+        this.lastCast = s ? { x: s.x, y: s.y, at: performance.now() } : null;
+      } else if (def.target === 'tile' && target) {
+        this.lastCast = { x: target.x ?? null, y: target.y ?? null, at: performance.now() };
+      } else {
+        this.lastCast = { x: null, y: null, at: performance.now() };
+      }
       ambience.event(['plague', 'curse', 'drought'].includes(id) ? 'plague' : 'divine');
       if (id === 'rain') ambience.event('rain');
       this.afterTicks();
@@ -324,7 +346,7 @@ class Game {
     }, 4200);
   }
   setModal(m: 'none' | 'saves' | 'seed'): void { this.modal = m; this.bump(); }
-  setLeftTab(t: 'chronicle' | 'myths' | 'charts'): void { this.leftTab = t; this.bump(); }
+  setLeftTab(t: 'chronicle' | 'myths' | 'ledger' | 'charts'): void { this.leftTab = t; this.bump(); }
   focusEvent(id: number): void {
     this.leftTab = 'chronicle';
     this.focusEventId = id;
@@ -345,6 +367,8 @@ class Game {
 }
 
 export const game = new Game();
+// dev/debug handle (harmless in production; useful for headless verification)
+(window as unknown as { giab: Game }).giab = game;
 
 export function useGame(): number {
   return useSyncExternalStore(game.subscribe, game.snapshot);

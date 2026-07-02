@@ -20,7 +20,7 @@ function Meter({ label, value, hue }: { label: string; value: number; hue: numbe
 }
 
 const EVENT_ICON: Record<string, string> = {
-  arrival: '⛵', era: '✦', founding: '⌂', famine: '🌾', plague: '☠', war: '⚔', ruin: '🕯',
+  arrival: '⛵', era: '✦', founding: '⌂', famine: '🌾', plague: '☠', war: '⚔', ruin: '🕯', wonder: '✹',
   tech: '✎', deity: '☀', faith: '✧', prophecy: '◉', schism: '⚡', taboo: '⛔', ritual: '❋',
   divine: '❋', disaster: '🌩', trade: '⇄', leader: '♦', death: '✝', building: '⌂', strife: '🔥', mishap: '·', birth: '·',
 };
@@ -32,9 +32,26 @@ export function ChroniclePanel(): JSX.Element {
   const [majorOnly, setMajorOnly] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const st = game.st;
-  const events = useMemo(() => {
+  const items = useMemo(() => {
     const evs = majorOnly ? st.events.filter(e => e.imp === 3) : st.events.filter(e => e.imp >= 1);
-    return evs.slice(-220).reverse();
+    const recent = evs.slice(-260);
+    // weave era headings into the stream, newest first
+    const eraOf = (year: number) => {
+      let cur = st.eras[0];
+      for (const e of st.eras) if (e.startYear <= year) cur = e;
+      return cur;
+    };
+    const out: ({ kind: 'event'; e: typeof recent[number] } | { kind: 'era'; name: string; note: string })[] = [];
+    let lastEra: string | null = null;
+    for (const e of recent) {
+      const era = eraOf(e.year);
+      if (era && era.name !== lastEra) {
+        out.push({ kind: 'era', name: era.name, note: era.note });
+        lastEra = era.name;
+      }
+      out.push({ kind: 'event', e });
+    }
+    return out.reverse();
   }, [st.events.length, majorOnly, st.tick]);
 
   useEffect(() => {
@@ -51,21 +68,25 @@ export function ChroniclePanel(): JSX.Element {
         <button className={`chip ${majorOnly ? 'on' : ''}`} onClick={() => setMajorOnly(!majorOnly)}>Major only</button>
       </div>
       <div className="scroll-list" ref={listRef}>
-        {events.map(e => (
+        {items.map((it, i) => it.kind === 'era' ? (
+          <div key={`era-${it.name}-${i}`} className="era-heading" title={it.note}>
+            <span className="era-rule" />{it.name}<span className="era-rule" />
+          </div>
+        ) : (
           <div
-            key={e.id}
-            data-eid={e.id}
-            className={`event imp${e.imp} ${game.focusEventId === e.id ? 'focused' : ''}`}
-            onClick={() => { if (e.sid !== null) game.select({ kind: 'settlement', sid: e.sid }); }}
+            key={it.e.id}
+            data-eid={it.e.id}
+            className={`event imp${it.e.imp} ${game.focusEventId === it.e.id ? 'focused' : ''}`}
+            onClick={() => { if (it.e.sid !== null) game.select({ kind: 'settlement', sid: it.e.sid }); }}
           >
             <div className="event-head">
-              <span className="event-icon">{EVENT_ICON[e.type] ?? '·'}</span>
-              <span className="event-when">Year {e.year}, {SEASONS[e.season]}</span>
+              <span className="event-icon">{EVENT_ICON[it.e.type] ?? '·'}</span>
+              <span className="event-when">Year {it.e.year}, {SEASONS[it.e.season]}</span>
             </div>
-            <div className="event-text">{e.text}</div>
+            <div className="event-text">{it.e.text}</div>
           </div>
         ))}
-        {events.length === 0 && <div className="empty">History has not happened yet.</div>}
+        {items.length === 0 && <div className="empty">History has not happened yet.</div>}
       </div>
     </div>
   );
@@ -98,7 +119,7 @@ export function MythPanel(): JSX.Element {
           </div>
         )}
         {st.deities.map(d => (
-          <div key={d.id} className="deity-card">
+          <div key={d.id} className={`deity-card ${d.faded ? 'faded' : ''}`}>
             <div className="deity-name">{d.name}</div>
             <div className="deity-title">{d.title} · sovereign of {d.domain}</div>
             <div className="deity-bar">
@@ -106,7 +127,7 @@ export function MythPanel(): JSX.Element {
             </div>
             <div className="deity-meta">
               <span>{temperament(d)}</span>
-              <span>worship {Math.round(d.worship)}</span>
+              <span>{d.faded ? 'forgotten' : `worship ${Math.round(d.worship)}`}</span>
               <span>since year {d.year}</span>
             </div>
           </div>
@@ -134,9 +155,14 @@ export function MythPanel(): JSX.Element {
 
 // ---------------------------------------------------------------- Interventions
 
+const DOMAIN_HUE: Record<string, number> = { harvest: 42, storm: 205, death: 285, sky: 225, wisdom: 175, earth: 95 };
+const TARGET_WORD: Record<string, string> = { settlement: 'one settlement', tile: 'chosen ground', global: 'the whole world' };
+
 export function InterventionPanel(): JSX.Element {
   useGame();
+  const [hovered, setHovered] = useState<string | null>(null);
   const st = game.st;
+  const focus = INTERVENTIONS.find(d => d.id === (game.targeting ?? hovered));
   return (
     <div className="panel-inner ivn-panel">
       <div className="interventions">
@@ -144,30 +170,98 @@ export function InterventionPanel(): JSX.Element {
           const cdUntil = st.cooldowns[def.id] ?? 0;
           const onCd = cdUntil > st.tick;
           const cdYears = Math.ceil((cdUntil - st.tick) / 4);
+          const cdFrac = onCd ? (cdUntil - st.tick) / (def.cooldownYears * 4) : 0;
           const poor = st.influence < def.cost;
           const armed = game.targeting === def.id;
           const disabled = st.ended || onCd || poor;
+          const hue = DOMAIN_HUE[def.domain] ?? 40;
           return (
             <button
               key={def.id}
               className={`ivn ${armed ? 'armed' : ''} ${disabled ? 'disabled' : ''}`}
+              style={{ ['--hue' as string]: hue, ['--cd' as string]: `${Math.round(cdFrac * 360)}deg` }}
               onClick={() => !disabled && game.beginIntervention(def.id)}
-              title={`${def.desc}\n\n${def.whisper}`}
+              onMouseEnter={() => setHovered(def.id)}
+              onMouseLeave={() => setHovered(h => (h === def.id ? null : h))}
             >
-              <span className="ivn-icon">{def.icon}</span>
+              <span className={`ivn-sigil ${onCd ? 'cooling' : ''}`}>
+                <span className="ivn-icon">{def.icon}</span>
+              </span>
               <span className="ivn-name">{def.name}</span>
-              <span className="ivn-cost">{onCd ? `${cdYears}y` : def.cost}</span>
+              <span className="ivn-cost">{onCd ? `${cdYears}y` : `◈ ${def.cost}`}</span>
             </button>
           );
         })}
       </div>
-      <div className="ivn-footnote">
-        {game.targeting
-          ? <>Your hand hovers over the island. <b>Click the bottle</b> to act, or click the power again to withhold.</>
-          : <>Interventions are never orders. They are weather, luck, dreams — raw material for whatever the mortals decide it meant.</>}
+      <div className="ivn-preview">
+        {game.targeting && focus ? (
+          <>
+            <div className="ivn-preview-title">{focus.icon}&ensp;{focus.name} <span className="muted">— your hand hovers</span></div>
+            <div className="ivn-preview-body"><b>Click the world</b> to act, or click the sigil again to withhold.</div>
+          </>
+        ) : focus ? (
+          <>
+            <div className="ivn-preview-title">{focus.icon}&ensp;{focus.name}
+              <span className="ivn-preview-meta">◈ {focus.cost} · rests {focus.cooldownYears}y · {TARGET_WORD[focus.target]}</span>
+            </div>
+            <div className="ivn-preview-body">{focus.desc}</div>
+            <div className="ivn-preview-whisper">{focus.whisper} Echoes for decades.</div>
+          </>
+        ) : (
+          <div className="ivn-preview-body muted">
+            Interventions are never orders — they are weather, luck, dreams. Raw material for whatever the mortals decide it meant.
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------- Divine Ledger
+
+export function LedgerPanel(): JSX.Element {
+  useGame();
+  const st = game.st;
+  const entries = st.ledger.slice().reverse();
+  return (
+    <div className="panel-inner">
+      <div className="scroll-list">
+        {entries.length === 0 && (
+          <div className="empty">
+            The ledger is blank.<br /><br />
+            Every act of yours will be written here in two hands: what you did, and what they decided it meant. The distance between those lines is the whole game.
+          </div>
+        )}
+        {entries.map(le => (
+          <div key={le.id} className="ledger-entry">
+            <div className="ledger-act">
+              <span className="ledger-icon">{le.icon}</span>
+              <div>
+                <div className="ledger-what">You {ledgerVerb(le.action)} <b>{le.targetName}</b></div>
+                <div className="ledger-when">Year {le.year}</div>
+              </div>
+            </div>
+            <div className={`ledger-belief ${le.interpretation ? '' : 'pending'}`}>
+              {le.interpretation ?? 'No one has explained it — yet.'}
+            </div>
+            {le.echoes.map((ec, i) => (
+              <div key={i} className="ledger-echo">↳ {ec}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ledgerVerb(action: string): string {
+  const m: Record<string, string> = {
+    'Omen': 'sent an omen over', 'Rain': 'opened the sky above', 'Bless Harvest': 'blessed the fields of',
+    'Curse': 'laid a curse on', 'Drought': 'sealed the sky above', 'Inspire Leader': 'kindled a mind in',
+    'Eclipse': 'swallowed the sun above', 'Consecrate Land': 'hallowed', 'Miracle': 'worked a miracle in',
+    'Reveal Knowledge': 'slipped knowledge into', 'Plague': 'sent the pale visitor to', 'Comet': 'wrote fire across',
+  };
+  return m[action] ?? 'touched';
 }
 
 // ---------------------------------------------------------------- Inspector
@@ -355,10 +449,12 @@ export function LeftColumn(): JSX.Element {
       <div className="tabs">
         <button className={tab === 'chronicle' ? 'on' : ''} onClick={() => game.setLeftTab('chronicle')}>Chronicle</button>
         <button className={tab === 'myths' ? 'on' : ''} onClick={() => game.setLeftTab('myths')}>Mythology</button>
+        <button className={tab === 'ledger' ? 'on' : ''} onClick={() => game.setLeftTab('ledger')}>Ledger</button>
         <button className={tab === 'charts' ? 'on' : ''} onClick={() => game.setLeftTab('charts')}>Histories</button>
       </div>
       {tab === 'chronicle' && <ChroniclePanel />}
       {tab === 'myths' && <MythPanel />}
+      {tab === 'ledger' && <LedgerPanel />}
       {tab === 'charts' && <Charts />}
     </aside>
   );

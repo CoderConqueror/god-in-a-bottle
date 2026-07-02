@@ -21,62 +21,62 @@ export interface InterventionDef {
 
 export const INTERVENTIONS: InterventionDef[] = [
   {
-    id: 'omen', name: 'Omen', icon: '◉', cost: 8, cooldownYears: 1, target: 'settlement', domain: 'sky',
+    id: 'omen', name: 'Omen', icon: '◉', cost: 8, cooldownYears: 3, target: 'settlement', domain: 'sky',
     desc: 'A sign only they will see: birds flying wrong, a calf born marked. Softens their intent — how they read it is theirs.',
     whisper: 'The cheapest word in your language.',
   },
   {
-    id: 'rain', name: 'Rain', icon: '☂', cost: 15, cooldownYears: 2, target: 'global', domain: 'storm',
+    id: 'rain', name: 'Rain', icon: '☂', cost: 15, cooldownYears: 5, target: 'global', domain: 'storm',
     desc: 'Open the sky. Ends drought and quickens every field — but rivers remember too much water.',
     whisper: 'Mercy, in the shape of weather.',
   },
   {
-    id: 'bless', name: 'Bless Harvest', icon: '✳', cost: 18, cooldownYears: 3, target: 'settlement', domain: 'harvest',
+    id: 'bless', name: 'Bless Harvest', icon: '✳', cost: 18, cooldownYears: 8, target: 'settlement', domain: 'harvest',
     desc: 'Two years of impossible abundance for one settlement. Full bellies make more mouths.',
     whisper: 'Generosity has consequences.',
   },
   {
-    id: 'curse', name: 'Curse', icon: '⌁', cost: 20, cooldownYears: 6, target: 'settlement', domain: 'death',
+    id: 'curse', name: 'Curse', icon: '⌁', cost: 20, cooldownYears: 15, target: 'settlement', domain: 'death',
     desc: 'Misfortune clings to one settlement: accidents, gloom, thin yields. They will look for someone to blame.',
     whisper: 'A thumb pressed on one small scale.',
   },
   {
-    id: 'drought', name: 'Drought', icon: '☀', cost: 20, cooldownYears: 5, target: 'global', domain: 'storm',
+    id: 'drought', name: 'Drought', icon: '☀', cost: 20, cooldownYears: 12, target: 'global', domain: 'storm',
     desc: 'Seal the sky. Fields wither everywhere; those without rivers will envy those with them.',
     whisper: 'Scarcity is a sculptor.',
   },
   {
-    id: 'inspire', name: 'Inspire Leader', icon: '✦', cost: 22, cooldownYears: 8, target: 'settlement', domain: 'wisdom',
+    id: 'inspire', name: 'Inspire Leader', icon: '✦', cost: 22, cooldownYears: 20, target: 'settlement', domain: 'wisdom',
     desc: 'Fill one leader with vision for a decade: invention, unity, ambition. Ambition cuts both ways.',
     whisper: 'Great souls are rarely safe ones.',
   },
   {
-    id: 'eclipse', name: 'Eclipse', icon: '●', cost: 25, cooldownYears: 10, target: 'global', domain: 'sky',
+    id: 'eclipse', name: 'Eclipse', icon: '●', cost: 25, cooldownYears: 25, target: 'global', domain: 'sky',
     desc: 'Swallow the sun at midday. Awe floods every shrine; wars pause; the credulous panic.',
     whisper: 'Nothing converts like darkness at noon.',
   },
   {
-    id: 'consecrate', name: 'Consecrate Land', icon: '⬟', cost: 30, cooldownYears: 10, target: 'tile', domain: 'earth',
+    id: 'consecrate', name: 'Consecrate Land', icon: '⬟', cost: 30, cooldownYears: 25, target: 'tile', domain: 'earth',
     desc: 'Mark ground as holy forever. Pilgrims will come; settlements will grow toward it — or fight over it.',
     whisper: 'Geography is theology.',
   },
   {
-    id: 'miracle', name: 'Miracle', icon: '❋', cost: 30, cooldownYears: 8, target: 'settlement', domain: 'harvest',
+    id: 'miracle', name: 'Miracle', icon: '❋', cost: 30, cooldownYears: 20, target: 'settlement', domain: 'harvest',
     desc: 'The sick stand up. Plague ends, hearts lift, and the place may become a shrine to what you did.',
     whisper: 'The kindest thing you can be caught doing.',
   },
   {
-    id: 'reveal', name: 'Reveal Knowledge', icon: '✎', cost: 35, cooldownYears: 12, target: 'settlement', domain: 'wisdom',
+    id: 'reveal', name: 'Reveal Knowledge', icon: '✎', cost: 35, cooldownYears: 30, target: 'settlement', domain: 'wisdom',
     desc: 'Slip a finished idea into a dreaming mind. Progress leaps ahead — and every tool is also a weapon.',
     whisper: 'They will call it genius.',
   },
   {
-    id: 'plague', name: 'Plague', icon: '☠', cost: 35, cooldownYears: 15, target: 'settlement', domain: 'death',
+    id: 'plague', name: 'Plague', icon: '☠', cost: 35, cooldownYears: 40, target: 'settlement', domain: 'death',
     desc: 'Send the pale visitor to one settlement. Fewer mouths, emptier lanes, and a religion permanently changed.',
     whisper: 'You will not be forgiven. You will be worshipped.',
   },
   {
-    id: 'comet', name: 'Comet', icon: '☄', cost: 45, cooldownYears: 25, target: 'global', domain: 'sky',
+    id: 'comet', name: 'Comet', icon: '☄', cost: 45, cooldownYears: 60, target: 'global', domain: 'sky',
     desc: 'Drag a burning lamp across every night for a season. Prophecies ignite; cults are born; nothing is read small.',
     whisper: 'The loudest thing you can say without words.',
   },
@@ -113,6 +113,21 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
   st.interventionsUsed++;
   st.usedByKind[def.name] = (st.usedByKind[def.name] ?? 0) + 1;
 
+  // the divine ledger: what you did, before anyone decided what it meant
+  const lid = st.nextId++;
+  st.ledger.push({
+    id: lid,
+    tick: st.tick,
+    year: yearOf(st.tick),
+    action: def.name,
+    icon: def.icon,
+    targetName: s ? s.name : def.target === 'tile' ? 'unclaimed ground' : 'the whole sky',
+    domain: def.domain,
+    interpretation: null,
+    echoes: [],
+  });
+  if (st.ledger.length > 120) st.ledger.shift();
+
   switch (def.id) {
     case 'bless': {
       const b = s!;
@@ -135,7 +150,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
         ? `The sky breaks open at last. People stand in the downpour with their mouths open, laughing and weeping at once.`
         : `Long, generous rains sweep the island. Cisterns brim; the rivers run loud all night.`, null);
       if (st.weather.rainUses.length >= 2) {
-        st.delayed.push({ tick: st.tick + 2, kind: 'flood' });
+        st.delayed.push({ tick: st.tick + 2, kind: 'flood', lid });
       }
       return { ok: true, msg: 'The sky opens.' };
     }
@@ -143,7 +158,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
       st.weather.rain = 0;
       st.weather.drought += 2.4;
       recordSignal(st, 'storm', 0, 1.8, null);
-      st.delayed.push({ tick: st.tick + 8, kind: 'droughtBites' });
+      st.delayed.push({ tick: st.tick + 8, kind: 'droughtBites', lid });
       addEvent(st, 'divine', 2, `The rains simply stop. Week after cloudless week, the island watches its green turn to straw and starts counting jars.`, null);
       return { ok: true, msg: 'The sky is sealed.' };
     }
@@ -157,7 +172,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
         leader.faith = Math.min(100, leader.faith + 20);
         addMemory(leader, `Began dreaming true in year ${yearOf(st.tick)}`);
         addEvent(st, 'divine', 2, `${leader.name} of ${b.name} wakes changed — speaking of canals and granaries and stars as if reading from a book no one else can see. People follow, half in awe, half in fear.`, b.id);
-        st.delayed.push({ tick: st.tick + 44, kind: 'visionFades', a: b.id });
+        st.delayed.push({ tick: st.tick + 44, kind: 'visionFades', a: b.id, lid });
       }
       recordSignal(st, 'wisdom', 1.5, 0.5, b.id);
       return { ok: true, msg: 'A mind catches fire.' };
@@ -184,7 +199,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
       b.plague = ri(st.rng, 8, 13);
       recordSignal(st, 'death', 0, 2.5, b.id);
       addEvent(st, 'plague', 3, `It begins in ${b.name} with a fever that doesn't break. By the new moon there are too few well to tend the sick. They will remember this, and build a religion around remembering.`, b.id);
-      st.delayed.push({ tick: st.tick + 24, kind: 'reflection', a: b.id });
+      st.delayed.push({ tick: st.tick + 24, kind: 'reflection', a: b.id, lid });
       return { ok: true, msg: 'The pale visitor sets out.' };
     }
     case 'eclipse': {
@@ -274,7 +289,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
       addEvent(st, 'divine', 3, hadPlague
         ? `In ${b.name}, on a single morning, every fever breaks at once. The sick stand up in their doorways blinking at the sun. Some laugh; most are very quiet.`
         : `A season of impossible good health in ${b.name}: old wounds close, weak children fatten, and not one grave is dug.`, b.id);
-      st.delayed.push({ tick: st.tick + 20, kind: 'pilgrimSite', a: b.id });
+      st.delayed.push({ tick: st.tick + 20, kind: 'pilgrimSite', a: b.id, lid });
       return { ok: true, msg: 'The dying stand up.' };
     }
     case 'curse': {
@@ -283,7 +298,7 @@ export function applyIntervention(st: SimState, id: string, target?: { sid?: num
       b.morale = Math.max(0, b.morale - 12);
       recordSignal(st, 'death', 0, 1.5, b.id);
       addEvent(st, 'divine', 2, `A wrongness settles on ${b.name}. Ropes fray, milk sours, footings slip. Nothing anyone can point to — which is exactly what frightens them.`, b.id);
-      st.delayed.push({ tick: st.tick + 12, kind: 'scapegoat', a: b.id });
+      st.delayed.push({ tick: st.tick + 12, kind: 'scapegoat', a: b.id, lid });
       return { ok: true, msg: 'Misfortune finds an address.' };
     }
     case 'omen': {
